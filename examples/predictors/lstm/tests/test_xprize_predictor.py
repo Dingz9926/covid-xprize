@@ -15,6 +15,7 @@ DATA_FILE = os.path.join(FIXTURES_PATH, "OxCGRT_latest.csv")
 DATA_URL = "https://raw.githubusercontent.com/OxCGRT/covid-policy-tracker/master/data/OxCGRT_latest.csv"
 PREDICTOR_WEIGHTS = os.path.join(FIXTURES_PATH, "trained_model_weights_for_tests.h5")
 
+CUTOFF_DATE = "2020-07-31"
 START_DATE = "2020-08-01"
 END_DATE = "2020-08-04"
 
@@ -27,11 +28,11 @@ class TestXPrizePredictor(unittest.TestCase):
         urllib.request.urlretrieve(DATA_URL, DATA_FILE)
 
     def test_predict(self):
-        predictor = XPrizePredictor(PREDICTOR_WEIGHTS, DATA_FILE)
+        predictor = XPrizePredictor(PREDICTOR_WEIGHTS, DATA_FILE, CUTOFF_DATE)
         pred_df = predictor.predict(START_DATE, END_DATE, EXAMPLE_INPUT_FILE)
         self.assertIsInstance(pred_df, pd.DataFrame)
 
     def test_train(self):
-        predictor = XPrizePredictor(None, DATA_FILE)
+        predictor = XPrizePredictor(None, DATA_FILE, CUTOFF_DATE)
         model = predictor.train()
         self.assertIsNotNone(model)

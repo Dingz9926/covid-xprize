@@ -11,13 +11,12 @@ import neat
 import numpy as np
 import pandas as pd
 
-from validation.cost_generator import generate_costs
+from examples.predictors.lstm.xprize_predictor import XPrizePredictor
 
 from utils import CASES_COL
 from utils import PRED_CASES_COL
 from utils import IP_COLS
 from utils import IP_MAX_VALUES
-from utils import add_geo_id
 from utils import get_predictions
 from utils import prepare_historical_df
 
@@ -34,9 +33,7 @@ EVAL_END_DATE = '2020-08-02'
 # Number of days the prescriptors will look at in the past.
 # Larger values here may make convergence slower, but give
 # prescriptors more context. The number of inputs of each neat
-# network will be NB_LOOKBACK_DAYS * (IP_COLS + 1) + IP_COLS.
-# The '1' is for previous case data, and the final IP_COLS
-# is for IP cost information.
+# network will be NB_LOOKBACK_DAYS * (IP_COLS + 1).
 NB_LOOKBACK_DAYS = 14
 
 # Number of countries to use for training. Again, lower numbers
@@ -77,18 +74,6 @@ eval_end_date = pd.to_datetime(EVAL_END_DATE, format='%Y-%m-%d')
 
 # Function that evaluates the fitness of each prescriptor model
 def eval_genomes(genomes, config):
-
-    # Every generation sample a different set of costs per geo,
-    # so that over time solutions become robust to different costs.
-    cost_df = generate_costs(distribution='uniform')
-    cost_df = add_geo_id(cost_df)
-    geo_costs = {}
-    for geo in eval_geos:
-        costs = cost_df[cost_df['GeoID'] == geo]
-        cost_arr = np.array(costs[IP_COLS])[0]
-        geo_costs[geo] = cost_arr
-
-    # Evaluate each individual
     for genome_id, genome in genomes:
 
         # Create net from genome
@@ -103,9 +88,6 @@ def eval_genomes(genomes, config):
         eval_past_cases = deepcopy(past_cases)
         eval_past_ips = deepcopy(past_ips)
 
-        # Compute prescribed stringency incrementally
-        stringency = 0.
-
         # Make prescriptions one day at a time, feeding resulting
         # predictions from the predictor back into the prescriptor.
         for date in pd.date_range(eval_start_date, eval_end_date):
@@ -118,10 +100,8 @@ def eval_genomes(genomes, config):
                 # on a reasonable scale; many other approaches are possible.
                 X_cases = np.log(eval_past_cases[geo][-NB_LOOKBACK_DAYS:] + 1)
                 X_ips = eval_past_ips[geo][-NB_LOOKBACK_DAYS:]
-                X_costs = geo_costs[geo]
                 X = np.concatenate([X_cases.flatten(),
-                                    X_ips.flatten(),
-                                    X_costs])
+                                    X_ips.flatten()])
 
                 # Get prescription
                 prescribed_ips = net.activate(X)
@@ -139,11 +119,6 @@ def eval_genomes(genomes, config):
                 for ip_col, prescribed_ip in zip(IP_COLS, prescribed_ips):
                     df_dict[ip_col].append(prescribed_ip)
 
-                # Update stringency. This calculation could include division by
-                # the number of IPs and/or number of geos, but that would have
-                # no effect on the ordering of candidate solutions.
-                stringency += np.sum(geo_costs[geo] * prescribed_ips)
-
             # Create dataframe from prescriptions.
             pres_df = pd.DataFrame(df_dict)
 
@@ -152,7 +127,6 @@ def eval_genomes(genomes, config):
 
             # Update past data with new day of prescriptions and predictions
             pres_df['GeoID'] = pres_df['CountryName'] + '__' + pres_df['RegionName'].astype(str)
-            pred_df['RegionName'] = pred_df['RegionName'].fillna("")
             pred_df['GeoID'] = pred_df['CountryName'] + '__' + pred_df['RegionName'].astype(str)
             new_pres_df = pres_df[pres_df['Date'] == date_str]
             new_pred_df = pred_df[pred_df['Date'] == date_str]
@@ -177,6 +151,13 @@ def eval_genomes(genomes, config):
         # stringency zero. To achieve more interesting behavior, a different fitness
         # function may be required.
         new_cases = pred_df[PRED_CASES_COL].mean().mean()
+
+        # Computing stringency in this way assumes all ip's are weighted equally.
+        # In general, ip's may be weighted according to their cost. Such a weighting
+        # could be applied here to compute stringency as a weighted sum instead of
+        # the simple mean.
+        stringency = pres_df[IP_COLS].mean().mean()
+
         genome.fitness = -(new_cases * stringency)
 
         print('Evaluated Genome', genome_id)
